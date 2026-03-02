@@ -1,57 +1,70 @@
-import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { randomBytes, scrypt as _scrypt } from 'crypto';
-import { access } from 'fs';
 import { promisify } from 'util';
+import { PrismaService } from '../prisma/prisma.service';
 
-const scrypt = promisify(_scrypt)
-type User = {
-    userId: number;
-    name: string;
-    email: string;
-    password: string;
-};
-
-const users: User[] = [];
+const scrypt = promisify(_scrypt);
 
 @Injectable()
 export class AuthService {
-    constructor (private readonly jwtService: JwtService) {}
-    async signUp(name: string, email:string, password:string) {
-        const existingUser = users.find(user => user.email === email);
-        if (existingUser) {
-            return new BadRequestException('Email in use');
-        }
-        const salt = randomBytes(8).toString('hex');
-        const hash = await scrypt(password, salt, 32) as Buffer;
-        const saltAndHash = `${salt}.${hash.toString('hex')}`;
+  constructor(
+    private readonly jwtService: JwtService,
+    private readonly prisma: PrismaService,
+  ) {}
 
-        const user = {
-            userId: users.length + 1,
-            name,
-            email,
-            password: saltAndHash
-        };
+  async signUp(name: string, email: string, password: string) {
+    const existingUser = await this.prisma.userWebsite.findUnique({
+      where: { email },
+    });
 
-        users.push(user);
-        
-        console.log("Signed up: ", user);
-        const {password: _, ...result} = user;
-        return result;
+    if (existingUser) {
+      throw new BadRequestException('Email already in use');
     }
 
-    async signIn(email: string, password: string) {
-        const user = users.find((user)=> user.email === email)
-        if (!user) {
-            return new UnauthorizedException("Invalid credentials");
-        }
-        const [salt, storedHash] = user.password.split('.');
-        const hash = (await scrypt(password, salt, 32)) as Buffer;
-        if (storedHash!=hash.toString('hex')){
-            return new UnauthorizedException('Invalid credentials')
-        }
-        console.log("Signed In:", user);
-        const payload = {username: user.email, sub: user.userId};
-        return {accessToken: this.jwtService.sign(payload)}
+    const salt = randomBytes(8).toString('hex');
+    const hash = (await scrypt(password, salt, 32)) as Buffer;
+    const saltAndHash = `${salt}.${hash.toString('hex')}`;
+
+    const user = await this.prisma.userWebsite.create({
+      data: {
+        name,
+        email,
+        password: saltAndHash,
+      },
+    });
+
+    const { password: _, ...result } = user;
+    return result;
+  }
+
+  async signIn(email: string, password: string) {
+    const user = await this.prisma.userWebsite.findUnique({
+      where: { email },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('Invalid credentials');
     }
+
+    const [salt, storedHash] = user.password.split('.');
+    const hash = (await scrypt(password, salt, 32)) as Buffer;
+
+    if (storedHash !== hash.toString('hex')) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const payload = {
+      username: user.email,
+      sub: user.id,
+    };
+
+    return {
+      accessToken: this.jwtService.sign(payload),
+    };
+  }
 }

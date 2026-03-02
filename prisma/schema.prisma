@@ -4,12 +4,15 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
+  
 }
 
 model UserWebsite {
   id    Int     @id @default(autoincrement())
   email String  @unique
   name  String?
+  password String
   posts Post[]
 }
 
